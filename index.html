@@ -16,7 +16,8 @@
     h1 { font-size: 1.4rem; margin: 8px 0 16px; }
     h2 { font-size: 1.1rem; }
     .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
-    input, button { font: inherit; padding: 10px; border-radius: 8px; border:1px solid var(--line); background:var(--bg); color:var(--text); width:100%; margin:4px 0; }
+    input, button, textarea { font: inherit; padding: 10px; border-radius: 8px; border:1px solid var(--line); background:var(--bg); color:var(--text); width:100%; margin:4px 0; }
+    textarea { resize: vertical; }
     button { background:var(--red); color:#fff; border:none; cursor:pointer; font-weight:600; }
     button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
     button.small { width:auto; padding:6px 10px; font-size:.85rem; }
@@ -29,7 +30,6 @@
     .muted { color:var(--muted); font-size:.85rem; }
     .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:.75rem; border:1px solid var(--line); }
     .badge.ok { color:var(--green); border-color:var(--green); }
-    .badge.late { color:var(--red); border-color:var(--red); }
     .tabs { display:flex; gap:8px; overflow-x:auto; margin-bottom:12px; }
     .tabs button { width:auto; white-space:nowrap; background:transparent; color:var(--text); border:1px solid var(--line); }
     .tabs button.active { background:var(--red); color:#fff; border-color:var(--red); }
@@ -77,10 +77,9 @@
       <input id="iName" placeholder="Nom de l'idée *" required>
       <input id="iUrl" type="url" placeholder="Lien d'inspiration (https://…)">
       <label class="check"><input type="checkbox" id="iExact"> Le lien correspond exactement au produit</label>
-      <div class="row">
-        <div><div class="muted">Prix estimé (€)</div><input id="iPrice" type="number" min="0" step="0.01" inputmode="decimal"></div>
-        <div><div class="muted">À revalider le</div><input id="iRevalid" type="date"></div>
-      </div>
+      <div class="muted">Prix estimé (€)</div>
+      <input id="iPrice" type="number" min="0" step="0.01" inputmode="decimal">
+      <textarea id="iNotes" rows="3" placeholder="Notes (taille, couleur, magasin…)" autocomplete="off"></textarea>
       <div style="margin-top:10px"><strong>Pour qui ?</strong></div>
       <div class="muted">Coche une ou plusieurs personnes. « La voit » = la personne peut voir cette idée (décoche pour garder la surprise).</div>
       <div id="recipients"></div>
@@ -162,8 +161,9 @@
             ? error.message
             : "Un lien de réinitialisation a été envoyé sur cet email.";
   };
-  
+
   $("logout").onclick = () => sb.auth.signOut();
+
   sb.auth.onAuthStateChange((event, session) => {
     setTimeout(() => {
       if (event === "PASSWORD_RECOVERY") {
@@ -277,13 +277,9 @@
             .in("id", ids).order("added_at", { ascending: false });
     if (error) { $("ideas").innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
 
-    const today = new Date().toISOString().slice(0, 10);
     $("ideas").innerHTML = data.map(i => {
       const safeUrl = /^https?:\/\//i.test(i.url || "") ? i.url : null;
       const vals = [...(i.idea_validations || [])].sort((a, b) => a.validated_at < b.validated_at ? -1 : 1);
-      // À revalider : la date est passée et personne n'a validé depuis
-      const late = i.revalidate_at && i.revalidate_at <= today
-              && !vals.some(v => v.validated_at.slice(0, 10) >= i.revalidate_at);
       const who = (i.idea_recipients || []).map(r =>
               esc(r.person_id === me.id ? "moi" : r.person_name) + (r.visible ? "" : " <span class='muted'>(ne la voit pas)</span>")
       ).join(", ");
@@ -294,13 +290,11 @@
         ${safeUrl ? `<a href="${esc(safeUrl)}" target="_blank" rel="noopener noreferrer">Lien d'inspiration</a>` : ""}
         ${safeUrl ? `<span class="badge ${i.exact_link ? "ok" : ""}">${i.exact_link ? "lien exact" : "simple inspiration"}</span>` : ""}
       </div>
+      ${i.notes ? `<div style="margin:6px 0;white-space:pre-wrap">${esc(i.notes)}</div>` : ""}
       <div class="muted">Pour : ${who}</div>
-      <div class="muted">Ajouté par ${esc(i.added_by_name)} le ${new Date(i.added_at).toLocaleDateString("fr-FR")}</div>
-      ${i.revalidate_at ? `<div class="muted">À revalider le ${new Date(i.revalidate_at).toLocaleDateString("fr-FR")} ${late ? '<span class="badge late">à revalider</span>' : ""}</div>` : ""}
-      <div class="muted" style="margin-top:6px">Validations : ${vals.length
-              ? vals.map(v => esc(v.person_id === me.id ? "moi" : v.person_name) + " le " + new Date(v.validated_at).toLocaleDateString("fr-FR")
-                      + (v.person_id === me.id ? ` <a href="#" data-unval="${v.id}">✕</a>` : "")).join(" · ")
-              : "aucune"}</div>
+      ${vals.length ? `<div class="muted" style="margin-top:6px">Validé par ${vals.map(v =>
+              esc(v.person_id === me.id ? "moi" : v.person_name) + " le " + new Date(v.validated_at).toLocaleDateString("fr-FR")
+              + (v.person_id === me.id ? ` <a href="#" data-unval="${v.id}">✕</a>` : "")).join(" · ")}</div>` : ""}
       <div class="row" style="margin-top:8px">
         <button class="small" data-val="${i.id}" style="flex:0 0 auto">✓ Valider</button>
         ${i.added_by === me.id ? `<button class="ghost small" data-del="${i.id}" style="flex:0 0 auto">Supprimer</button>` : ""}
@@ -341,8 +335,9 @@
       p_url: $("iUrl").value.trim(),
       p_exact: $("iExact").checked,
       p_price: price === "" ? null : Number(price),
-      p_revalidate: $("iRevalid").value || null,
-      p_recipients: recipients
+      p_revalidate: null,
+      p_recipients: recipients,
+      p_notes: $("iNotes").value.trim() || null
     });
     if (error) { $("ideaErr").textContent = error.message; return; }
     $("ideaForm").reset();

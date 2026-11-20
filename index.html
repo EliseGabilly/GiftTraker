@@ -162,7 +162,8 @@
             ? error.message
             : "Un lien de réinitialisation a été envoyé sur cet email.";
   };
-
+  
+  $("logout").onclick = () => sb.auth.signOut();
   sb.auth.onAuthStateChange((event, session) => {
     setTimeout(() => {
       if (event === "PASSWORD_RECOVERY") {

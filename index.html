@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Listes de Noël</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <style>
+    :root { --bg:#fffaf5; --card:#fff; --text:#2a2a2a; --muted:#777; --red:#c0392b; --green:#2e7d4f; --line:#e8dfd6; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg:#1d1a18; --card:#2a2623; --text:#f1ebe5; --muted:#a69d94; --red:#e0584a; --green:#5fb985; --line:#3d3732; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
+    main { max-width: 640px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 1.4rem; margin: 8px 0 16px; }
+    h2 { font-size: 1.1rem; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+    input, button { font: inherit; padding: 10px; border-radius: 8px; border:1px solid var(--line); background:var(--bg); color:var(--text); width:100%; margin:4px 0; }
+    button { background:var(--red); color:#fff; border:none; cursor:pointer; font-weight:600; }
+    button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+    button.small { width:auto; padding:6px 10px; font-size:.85rem; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .row > * { flex:1; min-width:120px; }
+    label.check { display:flex; gap:8px; align-items:center; margin:6px 0; }
+    label.check input { width:auto; margin:0; }
+    .rcpt { display:flex; justify-content:space-between; gap:8px; border-top:1px solid var(--line); padding:2px 0; }
+    .rcpt label { flex:1; }
+    .muted { color:var(--muted); font-size:.85rem; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:.75rem; border:1px solid var(--line); }
+    .badge.ok { color:var(--green); border-color:var(--green); }
+    .badge.late { color:var(--red); border-color:var(--red); }
+    .tabs { display:flex; gap:8px; overflow-x:auto; margin-bottom:12px; }
+    .tabs button { width:auto; white-space:nowrap; background:transparent; color:var(--text); border:1px solid var(--line); }
+    .tabs button.active { background:var(--red); color:#fff; border-color:var(--red); }
+    .err { color:var(--red); min-height:1.2em; }
+    .hidden { display:none; }
+    a { color:var(--red); }
+  </style>
+</head>
+<body>
+<main>
+  <h1>🎅 Listes de Noël</h1>
+
+  <!-- Connexion -->
+  <section id="auth" class="card hidden">
+    <h2 id="authTitle">Connexion</h2>
+    <input id="name" placeholder="Ton prénom" class="hidden" autocomplete="given-name">
+    <input id="email" type="email" placeholder="Email" autocomplete="email">
+    <input id="password" type="password" placeholder="Mot de passe (6 caractères min.)" autocomplete="current-password">
+    <button id="authBtn">Se connecter</button>
+    <button id="switchBtn" class="ghost">Pas de compte ? S'inscrire</button>
+    <button id="forgotBtn" class="ghost">Mot de passe oublié ?</button>
+    <div id="authErr" class="err"></div>
+  </section>
+
+  <!-- App -->
+  <section id="app" class="hidden">
+    <div class="row" style="margin-bottom:8px">
+      <span class="muted" id="who"></span>
+      <button class="ghost small" id="logout" style="flex:0">Déconnexion</button>
+    </div>
+
+    <div class="tabs" id="tabs"></div>
+
+    <div class="card">
+      <div class="row">
+        <input id="friendEmail" type="email" placeholder="Email d'un ami à ajouter" autocomplete="off">
+        <button id="addFriendBtn" style="flex:0 0 auto;width:auto">Ajouter</button>
+      </div>
+      <div id="friendErr" class="err"></div>
+    </div>
+
+    <h2 id="listTitle"></h2>
+
+    <form id="ideaForm" class="card">
+      <input id="iName" placeholder="Nom de l'idée *" required>
+      <input id="iUrl" type="url" placeholder="Lien d'inspiration (https://…)">
+      <label class="check"><input type="checkbox" id="iExact"> Le lien correspond exactement au produit</label>
+      <div class="row">
+        <div><div class="muted">Prix estimé (€)</div><input id="iPrice" type="number" min="0" step="0.01" inputmode="decimal"></div>
+        <div><div class="muted">À revalider le</div><input id="iRevalid" type="date"></div>
+      </div>
+      <div style="margin-top:10px"><strong>Pour qui ?</strong></div>
+      <div class="muted">Coche une ou plusieurs personnes. « La voit » = la personne peut voir cette idée (décoche pour garder la surprise).</div>
+      <div id="recipients"></div>
+      <button type="submit">Ajouter l'idée</button>
+      <div id="ideaErr" class="err"></div>
+    </form>
+
+    <div id="ideas"></div>
+  </section>
+</main>
+
+<script>
+  // ====== À REMPLIR (Supabase > Project Settings > API) ======
+  const SUPABASE_URL = "https://kjigybkqoedthrohgqke.supabase.co";
+  const SUPABASE_KEY = "sb_publishable_K98wWcPGK17nGaj5rs8sbw_Hs6PO6u2";
+  // ===========================================================
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  let me = null, myName = "", friends = [], currentList = null, signup = false, recovery = false;
+
+  // ---------- Auth ----------
+  $("switchBtn").onclick = () => {
+    if (recovery) return;
+    signup = !signup;
+    $("authTitle").textContent = signup ? "Inscription" : "Connexion";
+    $("authBtn").textContent = signup ? "Créer mon compte" : "Se connecter";
+    $("switchBtn").textContent = signup ? "J'ai déjà un compte" : "Pas de compte ? S'inscrire";
+    $("name").classList.toggle("hidden", !signup);
+    $("password").autocomplete = signup ? "new-password" : "current-password";
+  };
+
+  $("authBtn").onclick = async () => {
+    $("authErr").textContent = "";
+    const email = $("email").value.trim(), password = $("password").value;
+    let res;
+    if (recovery) {
+      if (password.length < 6) { $("authErr").textContent = "Le mot de passe doit contenir au moins 6 caractères."; return; }
+      const { error } = await sb.auth.updateUser({ password });
+      if (error) { $("authErr").textContent = error.message; return; }
+      recovery = false;
+      $("email").classList.remove("hidden");
+      $("switchBtn").classList.remove("hidden");
+      $("forgotBtn").classList.remove("hidden");
+      $("authTitle").textContent = "Connexion";
+      $("authBtn").textContent = "Se connecter";
+      $("switchBtn").textContent = "Pas de compte ? S'inscrire";
+      $("password").placeholder = "Mot de passe (6 caractères min.)";
+      $("password").autocomplete = "current-password";
+      $("password").value = "";
+      $("authErr").textContent = "Mot de passe changé. Tu peux maintenant te connecter.";
+      await sb.auth.signOut();
+      return;
+    }
+    if (signup) {
+      const name = $("name").value.trim();
+      if (!name) { $("authErr").textContent = "Indique ton prénom."; return; }
+      res = await sb.auth.signUp({ email, password, options: { data: { name } } });
+      if (!res.error && !res.data.session) {
+        $("authErr").textContent = "Compte créé : confirme ton email puis connecte-toi.";
+        return;
+      }
+    } else {
+      res = await sb.auth.signInWithPassword({ email, password });
+    }
+    if (res.error) $("authErr").textContent = res.error.message;
+  };
+
+  $("forgotBtn").onclick = async () => {
+    $("authErr").textContent = "";
+    const email = $("email").value.trim();
+    if (!email) { $("authErr").textContent = "Indique ton email pour recevoir le lien."; return; }
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.href.split("#")[0]
+    });
+    $("authErr").textContent = error
+            ? error.message
+            : "Un lien de réinitialisation a été envoyé sur cet email.";
+  };
+
+  sb.auth.onAuthStateChange((event, session) => {
+    setTimeout(() => {
+      if (event === "PASSWORD_RECOVERY") {
+        recovery = true;
+        started = null;
+        $("app").classList.add("hidden");
+        $("auth").classList.remove("hidden");
+        $("authTitle").textContent = "Nouveau mot de passe";
+        $("authBtn").textContent = "Changer le mot de passe";
+        $("email").classList.add("hidden");
+        $("name").classList.add("hidden");
+        $("switchBtn").classList.add("hidden");
+        $("forgotBtn").classList.add("hidden");
+        $("password").placeholder = "Nouveau mot de passe (6 caractères min.)";
+        $("password").autocomplete = "new-password";
+        $("password").value = "";
+        $("authErr").textContent = "";
+      } else {
+        start(session);
+      }
+    }, 0);
+  });
+
+  sb.auth.getSession().then(({ data }) => start(data.session));
+
+  let started; // undefined au départ, pour que le cas « non connecté » soit bien traité
+  async function start(session) {
+    if (recovery) return;
+    const uid = session?.user?.id ?? null;
+    if (uid === started) return;
+    started = uid;
+    if (!session) {
+      me = null;
+      $("app").classList.add("hidden");
+      $("auth").classList.remove("hidden");
+      return;
+    }
+    me = session.user;
+    $("auth").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    const { data: prof } = await sb.from("profiles").select("name").eq("id", me.id).single();
+    myName = prof?.name || me.email;
+    $("who").textContent = "Connecté : " + myName;
+    currentList = me.id;
+    await loadFriends();
+  }
+
+  // ---------- Amis ----------
+  async function loadFriends() {
+    const { data: links } = await sb.from("friendships").select("user_id, friend_id");
+    const ids = [...new Set((links || []).map(l => l.user_id === me.id ? l.friend_id : l.user_id))];
+    friends = [];
+    if (ids.length) {
+      const { data } = await sb.from("profiles").select("id, name").in("id", ids);
+      friends = (data || []).sort((a, b) => a.name.localeCompare(b.name));
+    }
+    renderTabs();
+    renderRecipients();
+    loadIdeas();
+  }
+
+  $("addFriendBtn").onclick = async () => {
+    $("friendErr").textContent = "";
+    const email = $("friendEmail").value.trim();
+    if (!email) return;
+    const { error } = await sb.rpc("add_friend", { friend_email: email });
+    if (error) { $("friendErr").textContent = error.message; return; }
+    $("friendEmail").value = "";
+    loadFriends();
+  };
+
+  function renderTabs() {
+    const t = $("tabs");
+    t.innerHTML = "";
+    const mk = (id, label) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      if (currentList === id) b.className = "active";
+      b.onclick = () => { currentList = id; renderTabs(); renderRecipients(); loadIdeas(); };
+      t.appendChild(b);
+    };
+    mk(me.id, "Ma liste");
+    friends.forEach(f => mk(f.id, f.name));
+  }
+
+  // ---------- Destinataires ----------
+  // Par défaut : la personne dont on regarde la liste est cochée.
+  // Visible par défaut pour soi, caché (surprise) pour les autres.
+  function renderRecipients() {
+    const people = [{ id: me.id, name: "Moi" }, ...friends];
+    $("recipients").innerHTML = people.map(p => `
+    <div class="rcpt">
+      <label class="check"><input type="checkbox" data-r="${p.id}" ${p.id === currentList ? "checked" : ""}> ${esc(p.name)}</label>
+      <label class="check muted"><input type="checkbox" data-v="${p.id}" ${p.id === me.id ? "checked" : ""}> ${p.id === me.id ? "je la vois" : "la voit"}</label>
+    </div>`).join("");
+  }
+
+  // ---------- Idées ----------
+  async function loadIdeas() {
+    const mine = currentList === me.id;
+    const friend = friends.find(f => f.id === currentList);
+    $("listTitle").textContent = mine ? "Ma liste au Père Noël" : "Liste de " + (friend?.name || "");
+
+    const { data: links, error: e1 } = await sb.from("idea_recipients").select("idea_id").eq("person_id", currentList);
+    if (e1) { $("ideas").innerHTML = `<div class="err">${esc(e1.message)}</div>`; return; }
+    const ids = (links || []).map(l => l.idea_id);
+    if (!ids.length) { $("ideas").innerHTML = `<div class="muted">Aucune idée pour l'instant.</div>`; return; }
+
+    const { data, error } = await sb.from("ideas")
+            .select("*, idea_recipients(person_id, person_name, visible), idea_validations(id, person_id, person_name, validated_at)")
+            .in("id", ids).order("added_at", { ascending: false });
+    if (error) { $("ideas").innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
+
+    const today = new Date().toISOString().slice(0, 10);
+    $("ideas").innerHTML = data.map(i => {
+      const safeUrl = /^https?:\/\//i.test(i.url || "") ? i.url : null;
+      const vals = [...(i.idea_validations || [])].sort((a, b) => a.validated_at < b.validated_at ? -1 : 1);
+      // À revalider : la date est passée et personne n'a validé depuis
+      const late = i.revalidate_at && i.revalidate_at <= today
+              && !vals.some(v => v.validated_at.slice(0, 10) >= i.revalidate_at);
+      const who = (i.idea_recipients || []).map(r =>
+              esc(r.person_id === me.id ? "moi" : r.person_name) + (r.visible ? "" : " <span class='muted'>(ne la voit pas)</span>")
+      ).join(", ");
+      return `<div class="card">
+      <strong>${esc(i.name)}</strong>
+      ${i.price != null ? ` — ~${Number(i.price).toFixed(2)} €` : ""}
+      <div style="margin:6px 0">
+        ${safeUrl ? `<a href="${esc(safeUrl)}" target="_blank" rel="noopener noreferrer">Lien d'inspiration</a>` : ""}
+        ${safeUrl ? `<span class="badge ${i.exact_link ? "ok" : ""}">${i.exact_link ? "lien exact" : "simple inspiration"}</span>` : ""}
+      </div>
+      <div class="muted">Pour : ${who}</div>
+      <div class="muted">Ajouté par ${esc(i.added_by_name)} le ${new Date(i.added_at).toLocaleDateString("fr-FR")}</div>
+      ${i.revalidate_at ? `<div class="muted">À revalider le ${new Date(i.revalidate_at).toLocaleDateString("fr-FR")} ${late ? '<span class="badge late">à revalider</span>' : ""}</div>` : ""}
+      <div class="muted" style="margin-top:6px">Validations : ${vals.length
+              ? vals.map(v => esc(v.person_id === me.id ? "moi" : v.person_name) + " le " + new Date(v.validated_at).toLocaleDateString("fr-FR")
+                      + (v.person_id === me.id ? ` <a href="#" data-unval="${v.id}">✕</a>` : "")).join(" · ")
+              : "aucune"}</div>
+      <div class="row" style="margin-top:8px">
+        <button class="small" data-val="${i.id}" style="flex:0 0 auto">✓ Valider</button>
+        ${i.added_by === me.id ? `<button class="ghost small" data-del="${i.id}" style="flex:0 0 auto">Supprimer</button>` : ""}
+      </div>
+    </div>`;
+    }).join("");
+
+    document.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+      if (!confirm("Supprimer cette idée ?")) return;
+      await sb.from("ideas").delete().eq("id", b.dataset.del);
+      loadIdeas();
+    });
+
+    document.querySelectorAll("[data-val]").forEach(b => b.onclick = async () => {
+      const { error } = await sb.rpc("validate_idea", { p_idea_id: b.dataset.val });
+      if (error) alert(error.message);
+      loadIdeas();
+    });
+
+    document.querySelectorAll("[data-unval]").forEach(a => a.onclick = async ev => {
+      ev.preventDefault();
+      await sb.from("idea_validations").delete().eq("id", a.dataset.unval);
+      loadIdeas();
+    });
+  }
+
+  $("ideaForm").onsubmit = async e => {
+    e.preventDefault();
+    $("ideaErr").textContent = "";
+    const recipients = [...document.querySelectorAll("[data-r]:checked")].map(c => ({
+      id: c.dataset.r,
+      visible: document.querySelector(`[data-v="${c.dataset.r}"]`).checked
+    }));
+    if (!recipients.length) { $("ideaErr").textContent = "Choisis au moins une personne."; return; }
+    const price = $("iPrice").value;
+    const { error } = await sb.rpc("add_idea", {
+      p_name: $("iName").value.trim(),
+      p_url: $("iUrl").value.trim(),
+      p_exact: $("iExact").checked,
+      p_price: price === "" ? null : Number(price),
+      p_revalidate: $("iRevalid").value || null,
+      p_recipients: recipients
+    });
+    if (error) { $("ideaErr").textContent = error.message; return; }
+    $("ideaForm").reset();
+    renderRecipients();
+    loadIdeas();
+  };
+</script>
+</body>
+</html>

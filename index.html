@@ -6,9 +6,9 @@
   <title>Listes de Noël</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
   <style>
-    :root { --bg:#fffaf5; --card:#fff; --text:#2a2a2a; --muted:#777; --red:#c0392b; --green:#2e7d4f; --line:#e8dfd6; }
+    :root { --bg:#fffaf5; --card:#fff; --text:#2a2a2a; --muted:#777; --red:#c0392b; --green:#2e7d4f; --orange:#d9822b; --line:#e8dfd6; }
     @media (prefers-color-scheme: dark) {
-      :root { --bg:#1d1a18; --card:#2a2623; --text:#f1ebe5; --muted:#a69d94; --red:#e0584a; --green:#5fb985; --line:#3d3732; }
+      :root { --bg:#1d1a18; --card:#2a2623; --text:#f1ebe5; --muted:#a69d94; --red:#e0584a; --green:#5fb985; --orange:#f0a04b; --line:#3d3732; }
     }
     * { box-sizing: border-box; }
     body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--text); }
@@ -30,6 +30,8 @@
     .muted { color:var(--muted); font-size:.85rem; }
     .badge { display:inline-block; padding:2px 8px; border-radius:99px; font-size:.75rem; border:1px solid var(--line); }
     .badge.ok { color:var(--green); border-color:var(--green); }
+    .badge.warn { color:var(--orange); border-color:var(--orange); }
+    .badge.late { color:var(--red); border-color:var(--red); }
     .tabs { display:flex; gap:8px; overflow-x:auto; margin-bottom:12px; }
     .tabs button { width:auto; white-space:nowrap; background:transparent; color:var(--text); border:1px solid var(--line); }
     .tabs button.active { background:var(--red); color:#fff; border-color:var(--red); }
@@ -83,7 +85,8 @@
       <div style="margin-top:10px"><strong>Pour qui ?</strong></div>
       <div class="muted">Coche une ou plusieurs personnes. « La voit » = la personne peut voir cette idée (décoche pour garder la surprise).</div>
       <div id="recipients"></div>
-      <button type="submit">Ajouter l'idée</button>
+      <button type="submit" id="submitBtn">Ajouter l'idée</button>
+      <button type="button" id="cancelEdit" class="ghost hidden">Annuler la modification</button>
       <div id="ideaErr" class="err"></div>
     </form>
 
@@ -242,7 +245,7 @@
       const b = document.createElement("button");
       b.textContent = label;
       if (currentList === id) b.className = "active";
-      b.onclick = () => { currentList = id; renderTabs(); renderRecipients(); loadIdeas(); };
+      b.onclick = () => { currentList = id; stopEdit(); renderTabs(); loadIdeas(); };
       t.appendChild(b);
     };
     mk(me.id, "Ma liste");
@@ -252,13 +255,59 @@
   // ---------- Destinataires ----------
   // Par défaut : la personne dont on regarde la liste est cochée.
   // Visible par défaut pour soi, caché (surprise) pour les autres.
-  function renderRecipients() {
+  // `preset` (mode modification) = { idPersonne: visible } pour préremplir les cases.
+  function renderRecipients(preset) {
     const people = [{ id: me.id, name: "Moi" }, ...friends];
-    $("recipients").innerHTML = people.map(p => `
+    $("recipients").innerHTML = people.map(p => {
+      const checked = preset ? (p.id in preset) : p.id === currentList;
+      const visible = preset ? !!preset[p.id] : p.id === me.id;
+      return `
     <div class="rcpt">
-      <label class="check"><input type="checkbox" data-r="${p.id}" ${p.id === currentList ? "checked" : ""}> ${esc(p.name)}</label>
-      <label class="check muted"><input type="checkbox" data-v="${p.id}" ${p.id === me.id ? "checked" : ""}> ${p.id === me.id ? "je la vois" : "la voit"}</label>
-    </div>`).join("");
+      <label class="check"><input type="checkbox" data-r="${p.id}" ${checked ? "checked" : ""}> ${esc(p.name)}</label>
+      <label class="check muted"><input type="checkbox" data-v="${p.id}" ${visible ? "checked" : ""}> ${p.id === me.id ? "je la vois" : "la voit"}</label>
+    </div>`;
+    }).join("");
+  }
+
+  // ---------- Modification d'une idée ----------
+  let editingId = null;
+  const ideaCache = {};
+
+  function startEdit(id) {
+    const i = ideaCache[id];
+    if (!i) return;
+    editingId = id;
+    $("iName").value = i.name;
+    $("iUrl").value = i.url || "";
+    $("iExact").checked = !!i.exact_link;
+    $("iPrice").value = i.price ?? "";
+    $("iNotes").value = i.notes || "";
+    const preset = {};
+    (i.idea_recipients || []).forEach(r => { preset[r.person_id] = r.visible; });
+    renderRecipients(preset);
+    $("submitBtn").textContent = "Enregistrer les modifications";
+    $("cancelEdit").classList.remove("hidden");
+    $("ideaErr").textContent = "";
+    $("ideaForm").scrollIntoView({ behavior: "smooth" });
+  }
+
+  function stopEdit() {
+    if (editingId) {
+      editingId = null;
+      $("ideaForm").reset();
+      $("submitBtn").textContent = "Ajouter l'idée";
+      $("cancelEdit").classList.add("hidden");
+    }
+    renderRecipients();
+  }
+
+  $("cancelEdit").onclick = stopEdit;
+
+  function monthsSince(dateStr) {
+    const d = new Date(dateStr), n = new Date();
+    let m = (n.getFullYear() - d.getFullYear()) * 12 + (n.getMonth() - d.getMonth());
+    if (n.getDate() < d.getDate()) m--;
+    return Math.max(0, m);
   }
 
   // ---------- Idées ----------
@@ -277,12 +326,18 @@
             .in("id", ids).order("added_at", { ascending: false });
     if (error) { $("ideas").innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
 
+    data.forEach(i => { ideaCache[i.id] = i; });
     $("ideas").innerHTML = data.map(i => {
       const safeUrl = /^https?:\/\//i.test(i.url || "") ? i.url : null;
       const vals = [...(i.idea_validations || [])].sort((a, b) => a.validated_at < b.validated_at ? -1 : 1);
       const who = (i.idea_recipients || []).map(r =>
               esc(r.person_id === me.id ? "moi" : r.person_name) + (r.visible ? "" : " <span class='muted'>(ne la voit pas)</span>")
       ).join(", ");
+      // Ancienneté : dernière validation, ou date d'ajout s'il n'y a aucune validation
+      const lastDate = vals.length ? vals[vals.length - 1].validated_at : i.added_at;
+      const age = monthsSince(lastDate);
+      const ageClass = age < 6 ? "ok" : age < 10 ? "warn" : "late";
+      const ageBadge = `<span class="badge ${ageClass}">${age < 1 ? "récent" : "il y a " + age + " mois"}</span>`;
       return `<div class="card">
       <strong>${esc(i.name)}</strong>
       ${i.price != null ? ` — ~${Number(i.price).toFixed(2)} €` : ""}
@@ -290,14 +345,17 @@
         ${safeUrl ? `<a href="${esc(safeUrl)}" target="_blank" rel="noopener noreferrer">Lien d'inspiration</a>` : ""}
         ${safeUrl ? `<span class="badge ${i.exact_link ? "ok" : ""}">${i.exact_link ? "lien exact" : "simple inspiration"}</span>` : ""}
       </div>
-      ${i.notes ? `<div style="margin:6px 0;white-space:pre-wrap">${esc(i.notes)}</div>` : ""}
+      ${i.notes ? `<div class="muted" style="margin:6px 0;white-space:pre-wrap">${esc(i.notes)}</div>` : ""}
       <div class="muted">Pour : ${who}</div>
-      ${vals.length ? `<div class="muted" style="margin-top:6px">Validé par ${vals.map(v =>
+      <div class="muted" style="margin-top:6px">${vals.length
+              ? "Validé par " + vals.map(v =>
               esc(v.person_id === me.id ? "moi" : v.person_name) + " le " + new Date(v.validated_at).toLocaleDateString("fr-FR")
-              + (v.person_id === me.id ? ` <a href="#" data-unval="${v.id}">✕</a>` : "")).join(" · ")}</div>` : ""}
+              + (v.person_id === me.id ? ` <a href="#" data-unval="${v.id}">✕</a>` : "")).join(" · ")
+              : "Ajouté par " + esc(i.added_by_name) + " le " + new Date(i.added_at).toLocaleDateString("fr-FR")} ${ageBadge}</div>
       <div class="row" style="margin-top:8px">
         <button class="small" data-val="${i.id}" style="flex:0 0 auto">✓ Valider</button>
-        ${i.added_by === me.id ? `<button class="ghost small" data-del="${i.id}" style="flex:0 0 auto">Supprimer</button>` : ""}
+        ${i.added_by === me.id ? `<button class="ghost small" data-edit="${i.id}" style="flex:0 0 auto">Modifier</button>
+        <button class="ghost small" data-del="${i.id}" style="flex:0 0 auto">Supprimer</button>` : ""}
       </div>
     </div>`;
     }).join("");
@@ -307,6 +365,8 @@
       await sb.from("ideas").delete().eq("id", b.dataset.del);
       loadIdeas();
     });
+
+    document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => startEdit(b.dataset.edit));
 
     document.querySelectorAll("[data-val]").forEach(b => b.onclick = async () => {
       const { error } = await sb.rpc("validate_idea", { p_idea_id: b.dataset.val });
@@ -330,18 +390,24 @@
     }));
     if (!recipients.length) { $("ideaErr").textContent = "Choisis au moins une personne."; return; }
     const price = $("iPrice").value;
-    const { error } = await sb.rpc("add_idea", {
+    const fields = {
       p_name: $("iName").value.trim(),
       p_url: $("iUrl").value.trim(),
       p_exact: $("iExact").checked,
       p_price: price === "" ? null : Number(price),
-      p_revalidate: null,
-      p_recipients: recipients,
-      p_notes: $("iNotes").value.trim() || null
-    });
+      p_notes: $("iNotes").value.trim() || null,
+      p_recipients: recipients
+    };
+    const { error } = editingId
+            ? await sb.rpc("update_idea", { p_id: editingId, ...fields })
+            : await sb.rpc("add_idea", { p_revalidate: null, ...fields });
     if (error) { $("ideaErr").textContent = error.message; return; }
-    $("ideaForm").reset();
-    renderRecipients();
+    if (editingId) {
+      stopEdit();
+    } else {
+      $("ideaForm").reset();
+      renderRecipients();
+    }
     loadIdeas();
   };
 </script>

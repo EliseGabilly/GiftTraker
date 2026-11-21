@@ -322,7 +322,7 @@
     if (!ids.length) { $("ideas").innerHTML = `<div class="muted">Aucune idée pour l'instant.</div>`; return; }
 
     const { data, error } = await sb.from("ideas")
-            .select("*, idea_recipients(person_id, person_name, visible), idea_validations(id, person_id, person_name, validated_at)")
+            .select("*, idea_recipients(person_id, person_name, visible), idea_validations(id, person_id, person_name, validated_at), idea_reservations(id, person_id, person_name, reserved_at)")
             .in("id", ids).order("added_at", { ascending: false });
     if (error) { $("ideas").innerHTML = `<div class="err">${esc(error.message)}</div>`; return; }
 
@@ -338,6 +338,9 @@
       const age = monthsSince(lastDate);
       const ageClass = age < 6 ? "ok" : age < 10 ? "warn" : "late";
       const ageBadge = `<span class="badge ${ageClass}">${age < 1 ? "récent" : "il y a " + age + " mois"}</span>`;
+      // Réservation : jamais renvoyée par la base aux destinataires de l'idée
+      const isRecipient = (i.idea_recipients || []).some(r => r.person_id === me.id);
+      const rsv = [].concat(i.idea_reservations || [])[0];
       return `<div class="card">
       <strong>${esc(i.name)}</strong>
       ${i.price != null ? ` — ~${Number(i.price).toFixed(2)} €` : ""}
@@ -352,8 +355,12 @@
               esc(v.person_id === me.id ? "moi" : v.person_name) + " le " + new Date(v.validated_at).toLocaleDateString("fr-FR")
               + (v.person_id === me.id ? ` <a href="#" data-unval="${v.id}">✕</a>` : "")).join(" · ")
               : "Ajouté par " + esc(i.added_by_name) + " le " + new Date(i.added_at).toLocaleDateString("fr-FR")} ${ageBadge}</div>
+      ${rsv ? `<div style="margin-top:6px"><span class="badge">🎁 Réservé par ${esc(rsv.person_id === me.id ? "moi" : rsv.person_name)} le ${new Date(rsv.reserved_at).toLocaleDateString("fr-FR")}</span></div>` : ""}
       <div class="row" style="margin-top:8px">
         <button class="small" data-val="${i.id}" style="flex:0 0 auto">✓ Valider</button>
+        ${isRecipient ? "" : rsv
+              ? (rsv.person_id === me.id ? `<button class="ghost small" data-unreserve="${rsv.id}" style="flex:0 0 auto">Annuler ma réservation</button>` : "")
+              : `<button class="small" data-reserve="${i.id}" style="flex:0 0 auto">🎁 Réserver</button>`}
         ${i.added_by === me.id ? `<button class="ghost small" data-edit="${i.id}" style="flex:0 0 auto">Modifier</button>
         <button class="ghost small" data-del="${i.id}" style="flex:0 0 auto">Supprimer</button>` : ""}
       </div>
@@ -367,6 +374,17 @@
     });
 
     document.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => startEdit(b.dataset.edit));
+
+    document.querySelectorAll("[data-reserve]").forEach(b => b.onclick = async () => {
+      const { error } = await sb.rpc("reserve_idea", { p_idea_id: b.dataset.reserve });
+      if (error) alert(error.message);
+      loadIdeas();
+    });
+
+    document.querySelectorAll("[data-unreserve]").forEach(b => b.onclick = async () => {
+      await sb.from("idea_reservations").delete().eq("id", b.dataset.unreserve);
+      loadIdeas();
+    });
 
     document.querySelectorAll("[data-val]").forEach(b => b.onclick = async () => {
       const { error } = await sb.rpc("validate_idea", { p_idea_id: b.dataset.val });

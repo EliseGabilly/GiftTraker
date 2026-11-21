@@ -255,13 +255,13 @@
 
   // ---------- Destinataires ----------
   // Par défaut : la personne dont on regarde la liste est cochée.
-  // Visible par défaut pour soi, caché (surprise) pour les autres.
+  // « La voit » est coché par défaut pour tout le monde (décocher pour garder la surprise).
   // `preset` (mode modification) = { idPersonne: visible } pour préremplir les cases.
   function renderRecipients(preset) {
     const people = [{ id: me.id, name: "Moi" }, ...friends];
     $("recipients").innerHTML = people.map(p => {
       const checked = preset ? (p.id in preset) : p.id === currentList;
-      const visible = preset ? !!preset[p.id] : p.id === me.id;
+      const visible = preset ? !!preset[p.id] : true;
       return `
     <div class="rcpt">
       <label class="check"><input type="checkbox" data-r="${p.id}" ${checked ? "checked" : ""}> ${esc(p.name)}</label>
